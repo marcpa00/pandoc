@@ -26,6 +26,8 @@ import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Text (Text)
+import Text.DocTemplates (FromContext(lookupContext), Context(..),
+                          ToContext(toVal))
 import Text.Pandoc.Class.PandocMonad (PandocMonad, report)
 import Text.Pandoc.Definition
 import Text.Pandoc.ImageSize
@@ -197,6 +199,11 @@ blockToAsciiDoc opts (BlockQuote blocks) = do
 blockToAsciiDoc opts (Table _ blkCapt specs thead tbody tfoot) = do
   let (caption, aligns, widths, headers, rows) =
         toLegacyTable blkCapt specs thead tbody tfoot
+
+  let sep = case T.unpack (writerIdentifierPrefix opts) of
+                 "" -> "|"
+                 x -> x
+  
   caption' <- inlineListToAsciiDoc opts caption
   let caption'' = if null caption
                      then empty
@@ -236,12 +243,14 @@ blockToAsciiDoc opts (Table _ blkCapt specs thead tbody tfoot) = do
              $ zipWith colspec aligns widths')
          <> text ","
          <> headerspec <> text "]"
+  let opts' = opts{ writerIdentifierPrefix = "!" }
+                                   
   let makeCell [Plain x] = do d <- blockListToAsciiDoc opts [Plain x]
-                              return $ text "|" <> chomp d
+                              return $ text sep <> chomp d
       makeCell [Para x]  = makeCell [Plain x]
-      makeCell []        = return $ text "|"
-      makeCell bs        = do d <- blockListToAsciiDoc opts bs
-                              return $ text "a|" $$ d
+      makeCell []        = return $ text sep
+      makeCell bs        = do d <- blockListToAsciiDoc opts' bs
+                              return $ text ("a" <> sep) $$ d
   let makeRow cells = hsep `fmap` mapM makeCell cells
   rows' <- mapM makeRow rows
   head' <- makeRow headers
@@ -251,7 +260,7 @@ blockToAsciiDoc opts (Table _ blkCapt specs thead tbody tfoot) = do
                     else 100000
   let maxwidth = maximum $ map offset (head':rows')
   let body = if maxwidth > colwidth then vsep rows' else vcat rows'
-  let border = text "|==="
+  let border = text (sep <> "===")
   return $
     caption'' $$ tablespec $$ border $$ head'' $$ body $$ border $$ blankline
 blockToAsciiDoc opts (BulletList items) = do
