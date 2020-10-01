@@ -320,6 +320,7 @@ bulletListItemToAsciiDoc opts blocks = do
 addBlock :: PandocMonad m
          => WriterOptions -> Doc Text -> Block -> ADW m (Doc Text)
 addBlock opts d b = do
+  isAsciidoctor <- gets asciidoctorVariant
   x <- chomp <$> blockToAsciiDoc opts b
   return $
     case b of
@@ -329,7 +330,9 @@ addBlock opts d b = do
         Plain (Math DisplayMath _:_) -> d <> cr <> x
         Para{} | isEmpty d -> x
         Plain{} | isEmpty d -> x
-        _ -> d <> cr <> text "+" <> cr <> x
+        _ -> if isAsciidoctor
+                then d <> cr <> text "{empty} +" <> cr <> x
+                else d <> cr <> text "+" <> cr <> x
 
 listBegin :: [Block] -> Doc Text
 listBegin blocks =
@@ -501,7 +504,12 @@ inlineToAsciiDoc _ il@(RawInline f s)
   | otherwise         = do
       report $ InlineNotRendered il
       return empty
-inlineToAsciiDoc _ LineBreak = return $ " +" <> cr
+inlineToAsciiDoc _ LineBreak = do
+  isAsciidoctor <- gets asciidoctorVariant
+  return $ if isAsciidoctor
+              then "{empty} +" <> cr
+              else " +" <> cr
+
 inlineToAsciiDoc _ Space = return space
 inlineToAsciiDoc opts SoftBreak =
   case writerWrapText opts of
