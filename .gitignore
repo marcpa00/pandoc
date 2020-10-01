@@ -26,3 +26,5 @@ data/reference.odt
 /stack.yaml.lock
 cabal.project.local
 /dist-newstyle/
+.idea/
+*.iml
