@@ -538,7 +538,7 @@ inNote ils =
 inlineCommand' :: PandocMonad m => LP m Inlines
 inlineCommand' = try $ do
   Tok _ (CtrlSeq name) cmd <- anyControlSeq
-  guard $ name /= "begin" && name /= "end"
+  guard $ name /= "begin" && name /= "end" && name /= "and"
   star <- option "" ("*" <$ symbol '*' <* sp)
   overlay <- option "" overlaySpecification
   let name' = name <> star <> overlay
@@ -875,9 +875,19 @@ inlineCommands = M.union inlineLanguageCommands $ M.fromList
   , ("ac", doAcronym "short")
   , ("acf", doAcronym "full")
   , ("acs", doAcronym "abbrv")
+  , ("acl", doAcronym "long")
   , ("acp", doAcronymPlural "short")
   , ("acfp", doAcronymPlural "full")
   , ("acsp", doAcronymPlural "abbrv")
+  , ("aclp", doAcronymPlural "long")
+  , ("Ac", doAcronym "short")
+  , ("Acf", doAcronym "full")
+  , ("Acs", doAcronym "abbrv")
+  , ("Acl", doAcronym "long")
+  , ("Acp", doAcronymPlural "short")
+  , ("Acfp", doAcronymPlural "full")
+  , ("Acsp", doAcronymPlural "abbrv")
+  , ("Aclp", doAcronymPlural "long")
   -- siuntix
   , ("si", skipopts *> dosi tok)
   , ("SI", doSI tok)
@@ -1275,10 +1285,7 @@ addMeta field val = updateState $ \st ->
 authors :: PandocMonad m => LP m ()
 authors = try $ do
   bgroup
-  let oneAuthor = mconcat <$>
-       many1 (notFollowedBy' (controlSeq "and") >>
-               (inline <|> mempty <$ blockCommand))
-               -- skip e.g. \vspace{10pt}
+  let oneAuthor = blocksToInlines' . B.toList . mconcat <$> many1 block
   auths <- sepBy oneAuthor (controlSeq "and")
   egroup
   addMeta "author" (map trimInlines auths)
@@ -1468,7 +1475,7 @@ section (ident, classes, kvs) lvl = do
 blockCommand :: PandocMonad m => LP m Blocks
 blockCommand = try $ do
   Tok _ (CtrlSeq name) txt <- anyControlSeq
-  guard $ name /= "begin" && name /= "end"
+  guard $ name /= "begin" && name /= "end" && name /= "and"
   star <- option "" ("*" <$ symbol '*' <* sp)
   let name' = name <> star
   let names = ordNub [name', name]
@@ -1690,7 +1697,7 @@ newtheorem = do
   sp
   series <- option Nothing $ Just . untokenize <$> bracketedToks
   sp
-  showName <- untokenize <$> braced
+  showName <- tok
   sp
   syncTo <- option Nothing $ Just . untokenize <$> bracketedToks
   sty <- sLastTheoremStyle <$> getState
@@ -1769,8 +1776,9 @@ theoremEnvironment name = do
                  Just ident ->
                    updateState $ \s ->
                      s{ sLabels = M.insert ident
-                         [Str (theoremName tspec), Str "\160",
-                          Str (renderDottedNum num)] (sLabels s) }
+                         (B.toList $
+                           theoremName tspec <> "\160" <>
+                           str (renderDottedNum num)) (sLabels s) }
                  Nothing -> return ()
                return $ space <> B.text (renderDottedNum num)
             else return mempty
@@ -1778,8 +1786,8 @@ theoremEnvironment name = do
                          PlainStyle      -> B.strong
                          DefinitionStyle -> B.strong
                          RemarkStyle     -> B.emph
-       let title = titleEmph (B.text (theoremName tspec) <> number)
-                                      <> optTitle <> "." <> space
+       let title = titleEmph (theoremName tspec <> number)
+                      <> optTitle <> "." <> space
        return $ divWith (fromMaybe "" mblabel, [name], []) $ addTitle title
               $ case theoremStyle tspec of
                   PlainStyle -> walk italicize bs

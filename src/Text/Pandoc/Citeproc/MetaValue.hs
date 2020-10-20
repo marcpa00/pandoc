@@ -97,11 +97,13 @@ dateToMetaValue date =
        | y < -1     -> printf "%05d-%02d" (y+1) m
        | otherwise  -> printf "%04d-%02d" y m
       (y:[])
+       | y == 0     -> printf "" -- used for open range
        | y < -1     -> printf "%05d" (y+1)
        | otherwise  -> printf "%04d" y
       _             -> mempty
 
-metaValueToReference :: MetaValue -> Maybe (Reference Inlines)
+metaValueToReference :: MetaValue
+                     -> Maybe (Reference Inlines)
 metaValueToReference (MetaMap m) = do
   let m' = M.mapKeys normalizeKey m
   id' <- M.lookup "id" m' >>= metaValueToText
