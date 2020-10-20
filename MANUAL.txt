@@ -143,15 +143,15 @@ contains images), [`hyperref`], [`xcolor`],
 [`ulem`], [`geometry`] (with the `geometry` variable set),
 [`setspace`] (with `linestretch`), and
 [`babel`] (with `lang`).  The use of `xelatex` or `lualatex` as
-the PDF engine requires [`fontspec`].  `xelatex` uses
-[`polyglossia`] (with `lang`), [`xecjk`], and [`bidi`] (with the
-`dir` variable set). If the `mathspec` variable is set,
-`xelatex` will use [`mathspec`] instead of [`unicode-math`].
-The [`upquote`] and [`microtype`] packages are used if
-available, and [`csquotes`] will be used for [typography]
-if the `csquotes` variable or metadata field is set to a
-true value.  The [`natbib`], [`biblatex`], [`bibtex`], and
-[`biber`] packages can optionally be used for [citation
+the PDF engine requires [`fontspec`].  `lualatex` uses
+[`selnolig`]. `xelatex` uses [`polyglossia`] (with `lang`),
+[`xecjk`], and [`bidi`] (with the `dir` variable set). If the
+`mathspec` variable is set, `xelatex` will use [`mathspec`]
+instead of [`unicode-math`].  The [`upquote`] and [`microtype`]
+packages are used if available, and [`csquotes`] will be used
+for [typography] if the `csquotes` variable or metadata field is
+set to a true value.  The [`natbib`], [`biblatex`], [`bibtex`],
+and [`biber`] packages can optionally be used for [citation
 rendering].  The following packages will be used to improve
 output quality if present, but pandoc does not require them to
 be present: [`upquote`] (for straight quotes in verbatim
@@ -200,6 +200,7 @@ footnotes in tables).
 [`xcolor`]: https://ctan.org/pkg/xcolor
 [`xecjk`]: https://ctan.org/pkg/xecjk
 [`xurl`]: https://ctan.org/pkg/xurl
+[`selnolig`]: https://ctan.org/pkg/selnolig
 
 
 
@@ -593,7 +594,7 @@ header when requesting a document from a URL:
 `-L` *SCRIPT*, `--lua-filter=`*SCRIPT*
 
 :   Transform the document in a similar fashion as JSON filters (see
-    `--filter`), but use pandoc's build-in Lua filtering system.  The given
+    `--filter`), but use pandoc's built-in Lua filtering system.  The given
     Lua script is expected to return a list of Lua filters which will be
     applied in order.  Each Lua filter must contain element-transforming
     functions indexed by the name of the AST element on which the filter
@@ -1521,9 +1522,22 @@ include-after-body: []
 include-in-header: []
 resource-path: ["."]
 
-# filters will be assumed to be Lua filters if they have
+# turn on built-in citation processing.  Note that if you need
+# control over when the citeproc processing is done relative
+# to other filters, you should instead use `citeproc` in the
+# list of `filters` (see below).
+citeproc: true
+csl: ieee
+bibliography:
+- foobar.bib
+- barbaz.json
+
+# Filters will be assumed to be Lua filters if they have
 # the .lua extension, and json filters otherwise.  But
-# the filter type can also be specified explicitly, as shown:
+# the filter type can also be specified explicitly, as shown.
+# Filters are run in the order specified.
+# To include the built-in citeproc filter, use either `citeproc`
+# or `{type: citeproc}`.
 filters:
 - wordcount.lua
 - type: json
@@ -2847,7 +2861,7 @@ their respective sections of [Pandoc's Markdown]:
   for the following formats (in addition to `markdown`):
 
   input formats
-  :  `latex`, `org`, `textile`, `html` (environments, `\ref`, and
+  :  `latex`, `textile`, `html` (environments, `\ref`, and
      `\eqref` only), `ipynb`
 
   output formats
@@ -2980,7 +2994,7 @@ extensions to Emacs Muse markup.
 In the `ipynb` input format, this causes Markdown cells
 to be included as raw Markdown blocks (allowing lossless
 round-tripping) rather than being parsed.  Use this only
-when you are targetting `ipynb` or a markdown-based
+when you are targeting `ipynb` or a markdown-based
 output format.
 
 #### Extension: `citations` {#org-citations}
@@ -5133,9 +5147,21 @@ array of YAML-encoded references, for example:
 Note that `pandoc` can be used to produce such a YAML metadata
 section from a BibTeX, BibLaTeX, or CSL JSON bibliography:
 
-    pandoc chem.bib -s -t markdown
-    pandoc chem.json -s -t markdown
+    pandoc chem.bib -s -f biblatex -t markdown
+    pandoc chem.json -s -f csljson -t markdown
 
+`pandoc` can also be used to produce CSL JSON bibliography
+from BibTeX, BibLaTeX, or markdown YAML:
+
+    pandoc chem.bib -s -f biblatex -t csljson
+    pandoc chem.yaml -s -f markdown -t csljson
+
+Running pandoc on a bibliography file with the `--citeproc`
+option will create a formatted bibliography in the format
+of your choice:
+
+    pandoc chem.bib -s --citeproc -o chem.html
+    pandoc chem.bib -s --citeproc -o chem.pdf
 
 ### Capitalization in titles
 
@@ -5239,7 +5265,7 @@ and escaped in the output, rather than being passed through raw.
 
 This feature allows stylesheets to be customized to give
 different output for different output formats.  However,
-stylesheets customized in this way will not be useable
+stylesheets customized in this way will not be usable
 by other CSL implementations.
 
 

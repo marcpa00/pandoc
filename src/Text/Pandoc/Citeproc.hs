@@ -18,12 +18,14 @@ import Text.Pandoc.Citeproc.Locator (parseLocator)
 import Text.Pandoc.Citeproc.CslJson (cslJsonToReferences)
 import Text.Pandoc.Citeproc.BibTeX (readBibtexString, Variant(..))
 import Text.Pandoc.Citeproc.MetaValue (metaValueToReference, metaValueToText)
+import Text.Pandoc.Readers.Markdown (yamlToRefs)
+import Text.Pandoc.Class (setResourcePath, getResourcePath, getUserDataDir)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as L
 import Text.Pandoc.Definition as Pandoc
 import Text.Pandoc.Walk
 import Text.Pandoc.Builder as B
-import Text.Pandoc (PandocMonad(..), PandocError(..), readMarkdown,
+import Text.Pandoc (PandocMonad(..), PandocError(..),
                     readDataFile, ReaderOptions(..), pandocExtensions,
                     report, LogMessage(..), fetchItem)
 import Text.Pandoc.Shared (stringify, ordNub, blocksToInlines)
@@ -52,21 +54,29 @@ processCitations (Pandoc meta bs) = do
   let cslfile = (lookupMeta "csl" meta <|> lookupMeta "citation-style" meta)
                 >>= metaValueToText
 
-  let getFile fp = catchError (fst <$> fetchItem fp)
-                      (\e -> catchError (readDataFile
-                                         (T.unpack $ "csl/" <> fp))
-                               (\_ -> throwError e))
+  let getFile defaultExtension fp = do
+        oldRp <- getResourcePath
+        mbUdd <- getUserDataDir
+        setResourcePath $ oldRp ++ maybe []
+                                   (\u -> [u <> "/csl",
+                                           u <> "/csl/dependent"]) mbUdd
+        let fp' = if T.any (=='.') fp
+                     then fp
+                     else fp <> defaultExtension
+        (result, _) <- fetchItem fp'
+        setResourcePath oldRp
+        return result
 
   let getCslDefault = readDataFile "default.csl"
 
-  cslContents <- UTF8.toText <$> maybe getCslDefault getFile cslfile
+  cslContents <- UTF8.toText <$> maybe getCslDefault (getFile ".csl") cslfile
 
   let abbrevFile = lookupMeta "citation-abbreviations" meta >>= metaValueToText
 
   mbAbbrevs <- case abbrevFile of
                  Nothing -> return Nothing
                  Just fp -> do
-                   rawAbbr <- getFile fp
+                   rawAbbr <- getFile ".json" fp
                    case eitherDecode (L.fromStrict rawAbbr) of
                      Left err -> throwError $ PandocCiteprocError $
                                  CiteprocParseError $
@@ -74,7 +84,11 @@ processCitations (Pandoc meta bs) = do
                                  <> "\n" <> T.pack err
                      Right abbr -> return $ Just abbr
 
-  let getParentStyle url = UTF8.toText . fst <$> fetchItem url
+  let getParentStyle url = do
+        -- first, try to retrieve the style locally, then use HTTP.
+        let basename = T.takeWhileEnd (/='/') url
+        UTF8.toText <$>
+          catchError (getFile ".csl" basename) (\_ -> fst <$> fetchItem url)
 
   -- TODO check .csl directory if not found
   styleRes <- Citeproc.parseStyle getParentStyle cslContents
@@ -111,7 +125,8 @@ processCitations (Pandoc meta bs) = do
                  Nothing -> return []
   let otherIdsMap = foldr (\ref m ->
                              case T.words . extractText <$>
-                                  M.lookup "other-ids" (referenceVariables ref) of
+                                  M.lookup "other-ids"
+                                      (referenceVariables ref) of
                                 Nothing  -> m
                                 Just ids -> foldr
                                   (\id' ->
@@ -140,7 +155,7 @@ processCitations (Pandoc meta bs) = do
                       (resultBibliography result)
   let moveNotes = maybe True truish $
                         lookupMeta "notes-after-punctuation" meta
-  let cits = map (walk (convertQuotes locale)) $
+  let cits = map (walk fixLinks . walk (convertQuotes locale)) $
                resultCitations result
 
   let fixQuotes = case localePunctuationInQuote locale of
@@ -153,7 +168,9 @@ processCitations (Pandoc meta bs) = do
          walk (fixQuotes .  mvPunct moveNotes locale) $ walk deNote $
          evalState (walkM insertResolvedCitations $ Pandoc meta' bs)
          $ cits
-  return $ Pandoc meta'' $ insertRefs refkvs classes meta'' (B.toList bibs) bs'
+  return $ Pandoc meta''
+         $ insertRefs refkvs classes meta''
+            (walk fixLinks $ B.toList bibs) bs'
 
 -- If we have a span.csl-left-margin followed by span.csl-right-inline,
 -- we insert a space. This ensures that they will be separated by a space,
@@ -178,17 +195,18 @@ getRefsFromBib locale idpred t = do
   let fp = T.unpack t
   raw <- readFileStrict fp
   case formatFromExtension fp of
-    Just f -> getRefs locale f idpred raw
+    Just f -> getRefs locale f idpred (Just fp) raw
     Nothing -> throwError $ PandocAppError $
-                 "Could not deterine bibliography format for " <> t
+                 "Could not determine bibliography format for " <> t
 
 getRefs :: PandocMonad m
         => Locale
         -> BibFormat
         -> (Text -> Bool)
+        -> Maybe FilePath
         -> ByteString
         -> m [Reference Inlines]
-getRefs locale format idpred raw =
+getRefs locale format idpred mbfp raw =
   case format of
     Format_bibtex ->
       either (throwError . PandocAppError . T.pack . show) return .
@@ -201,15 +219,11 @@ getRefs locale format idpred raw =
              (return . filter (idpred . unItemId . referenceId)) .
         cslJsonToReferences $ raw
     Format_yaml -> do
-      Pandoc meta _ <-
-           readMarkdown
-             def{ readerExtensions = pandocExtensions }
-             (UTF8.toText raw)
-      case lookupMeta "references" meta of
-          Just (MetaList rs) ->
-               return $ filter (idpred . unItemId . referenceId)
-                      $ mapMaybe metaValueToReference rs
-          _ -> throwError $ PandocAppError "No references field"
+      rs <- yamlToRefs idpred
+              def{ readerExtensions = pandocExtensions }
+              mbfp
+              (L.fromStrict raw)
+      return $ mapMaybe metaValueToReference rs
 
 -- localized quotes
 convertQuotes :: Locale -> Inline -> Inline
@@ -370,6 +384,15 @@ mvPunct moveNotes locale (Cite cs ils : Str "." : ys)
 mvPunct moveNotes locale (x:xs) = x : mvPunct moveNotes locale xs
 mvPunct _ _ [] = []
 
+-- move https://doi.org etc. prefix inside link text (#6723):
+fixLinks :: [Inline] -> [Inline]
+fixLinks (Str t : Link attr [Str u1] (u2,tit) : xs)
+  | t <> u1 == u2
+  = Link attr [Str (t <> u1)] (u2,tit) : fixLinks xs
+fixLinks (x:xs) = x : fixLinks xs
+fixLinks [] = []
+
+
 endWithPunct :: Bool -> [Inline] -> Bool
 endWithPunct _ [] = False
 endWithPunct onlyFinal xs@(_:_) =
@@ -469,11 +492,16 @@ linkifyVariables ref =
   ref{ referenceVariables = M.mapWithKey go $ referenceVariables ref }
  where
   go "URL" x    = tolink "https://" x
-  go "DOI" x    = tolink "https://doi.org/" x
+  go "DOI" x    = tolink "https://doi.org/" (fixShortDOI x)
   go "ISBN" x   = tolink "https://worldcat.org/isbn/" x
   go "PMID" x   = tolink "https://www.ncbi.nlm.nih.gov/pubmed/" x
   go "PMCID" x  = tolink "https://www.ncbi.nlm.nih.gov/pmc/articles/" x
   go _ x        = x
+  fixShortDOI x = let x' = extractText x
+                  in  if "10/" `T.isPrefixOf` x'
+                         then TextVal $ T.drop 3 x'
+                              -- see http://shortdoi.org
+                         else TextVal x'
   tolink pref x = let x' = extractText x
                       x'' = if "://" `T.isInfixOf` x'
                                then x'
@@ -504,6 +532,3 @@ removeFinalPeriod ils =
   case lastMay ils of
     Just (Str ".") -> initSafe ils
     _              -> ils
-
-
-
