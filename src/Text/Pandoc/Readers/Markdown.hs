@@ -13,7 +13,10 @@
 
 Conversion of markdown-formatted plain text to 'Pandoc' document.
 -}
-module Text.Pandoc.Readers.Markdown ( readMarkdown, yamlToMeta ) where
+module Text.Pandoc.Readers.Markdown (
+  readMarkdown,
+  yamlToMeta,
+  yamlToRefs ) where
 
 import Control.Monad
 import Control.Monad.Except (throwError)
@@ -44,7 +47,7 @@ import Text.Pandoc.Readers.LaTeX (applyMacros, rawLaTeXBlock, rawLaTeXInline)
 import Text.Pandoc.Shared
 import qualified Text.Pandoc.UTF8 as UTF8
 import Text.Pandoc.XML (fromEntities)
-import Text.Pandoc.Readers.Metadata (yamlBsToMeta)
+import Text.Pandoc.Readers.Metadata (yamlBsToMeta, yamlBsToRefs)
 
 type MarkdownParser m = ParserT Text ParserState m
 
@@ -64,16 +67,48 @@ readMarkdown opts s = do
 -- String scalars in the YAML are parsed as Markdown.
 yamlToMeta :: PandocMonad m
            => ReaderOptions
+           -> Maybe FilePath
            -> BL.ByteString
            -> m Meta
-yamlToMeta opts bstr = do
+yamlToMeta opts mbfp bstr = do
   let parser = do
+        oldPos <- getPosition
+        case mbfp of
+          Nothing -> return ()
+          Just fp -> setPosition $ initialPos fp
         meta <- yamlBsToMeta (fmap B.toMetaValue <$> parseBlocks) bstr
+        setPosition oldPos
         return $ runF meta defaultParserState
   parsed <- readWithM parser def{ stateOptions = opts } ""
   case parsed of
     Right result -> return result
     Left e       -> throwError e
+
+-- | Read a YAML string and extract references from the
+-- 'references' field, filter using an id predicate and
+-- parsing fields as Markdown.
+yamlToRefs :: PandocMonad m
+           => (Text -> Bool)
+           -> ReaderOptions
+           -> Maybe FilePath
+           -> BL.ByteString
+           -> m [MetaValue]
+yamlToRefs idpred opts mbfp bstr = do
+  let parser = do
+        oldPos <- getPosition
+        case mbfp of
+          Nothing -> return ()
+          Just fp -> setPosition $ initialPos fp
+        refs <- yamlBsToRefs (fmap B.toMetaValue <$> parseBlocks) idpred bstr
+        setPosition oldPos
+        return $ runF refs defaultParserState
+  parsed <- readWithM parser def{ stateOptions = opts } ""
+  case parsed of
+    Right result -> return result
+    Left e       -> throwError e
+
+
+
 
 --
 -- Constants and data structure definitions

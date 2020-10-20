@@ -48,7 +48,8 @@ writeCslJson _opts (Pandoc meta _) = do
                Right l -> return l
   case lookupMeta "references" meta of
     Just (MetaList rs) -> return $ (UTF8.toText $
-         toCslJson locale (mapMaybe metaValueToReference rs)) <> "\n"
+         toCslJson locale (mapMaybe metaValueToReference rs))
+          <> "\n"
     _ -> throwError $ PandocAppError "No references field"
 
 fromInlines :: [Inline] -> CslJson Text
@@ -83,5 +84,6 @@ toCslJson locale = toStrict .
   encodePretty' defConfig{ confIndent = Spaces 2
                          , confCompare = compare
                          , confNumFormat = Generic }
-  . map (runIdentity .  traverse (return . renderCslJson locale . foldMap fromInline))
-
+  . map (runIdentity .  traverse (return .
+                                  renderCslJson False locale .
+                                  foldMap fromInline))
