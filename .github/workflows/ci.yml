@@ -132,6 +132,7 @@ jobs:
     - name: Install dependencies
       run: |
           stack update
+          stack install happy
           stack test --dependencies-only --fast
     - name: Build and test
       shell: cmd
@@ -145,7 +146,7 @@ jobs:
       fail-fast: true
       matrix:
         versions:
-          - ghc: '8.10.2'
+          - ghc: '8.8.4'
             cabal: '3.2'
 
     steps:
